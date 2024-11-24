@@ -1,5 +1,5 @@
 [package]
-name = "bitsong-streaming"
+name = "cw-stream"
 version = "0.1.0"
 authors = ["hard-nett <hardnettt@proton.me>"]
 edition = "2021"
@@ -28,7 +28,7 @@ library = []
 optimize = """docker run --rm -v "$(pwd)":/code \
   --mount type=volume,source="$(basename "$(pwd)")_cache",target=/target \
   --mount type=volume,source=registry_cache,target=/usr/local/cargo/registry \
-  cosmwasm/optimizer:0.15.0
+  cosmwasm/optimizer-arm64:0.16.0
 """
 
 [dependencies]

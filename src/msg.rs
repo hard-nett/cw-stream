@@ -1,5 +1,4 @@
 use cosmwasm_schema::{cw_serde, QueryResponses};
-use cosmwasm_std::Uint128;
 
 use crate::state::Stream;
 
@@ -26,11 +25,9 @@ pub enum ExecuteMsg {
 #[derive(QueryResponses)]
 pub enum QueryMsg {
     // GetCount returns the current count as a json-encoded number
-    #[returns(StreamResponse)]
+    #[returns(Option<Stream>)]
     Stream { streamer: String, id: u64 },
+    #[returns(Option<Stream>)]
+    StreamById { id: u64 },
 }
 
-#[cw_serde]
-pub struct StreamResponse {
-    pub stream: Option<Stream>,
-}

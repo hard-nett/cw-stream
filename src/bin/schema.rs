@@ -1,6 +1,6 @@
 use cosmwasm_schema::write_api;
 
-use bitsong_streaming::msg::{ExecuteMsg, InstantiateMsg, QueryMsg};
+use cw_stream::msg::{ExecuteMsg, InstantiateMsg, QueryMsg};
 
 fn main() {
     write_api! {

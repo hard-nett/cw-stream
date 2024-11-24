@@ -1,3 +1,5 @@
+use std::num::TryFromIntError;
+
 use cosmwasm_std::StdError;
 use thiserror::Error;
 
@@ -6,12 +8,17 @@ pub enum ContractError {
     #[error("{0}")]
     Std(#[from] StdError),
 
+    #[error("{0}")]
+    TryFromIntError(#[from] TryFromIntError),
+
     #[error("NoStreamPaymentProvided")]
     NoStreamPaymentProvided {},
 
     #[error("NoStreamExists")]
     NoStreamExists {},
 
+    #[error("StreamNotExpired")]
+    StreamNotExpired {},
 
     #[error("MinimumStreamDurationError")]
     MinimumStreamDurationError {},

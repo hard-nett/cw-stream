@@ -55,41 +55,30 @@ pub fn execute(
 }
 
 pub mod manifest {
-    use cosmwasm_std::{coin, CosmosMsg, Empty, Timestamp, Uint128};
-
-    use crate::state::{Stream, STREAM, STREAM_ID};
-
     use super::*;
+    use crate::state::{Stream, STREAM, STREAMER_BY_ID, STREAM_ID};
+    use cosmwasm_std::{coin, CosmosMsg, Empty, Timestamp};
+
     pub fn create_stream(
         deps: DepsMut,
         info: MessageInfo,
         env: Env,
     ) -> Result<Response, ContractError> {
         let state = STATE.load(deps.storage)?;
-        // calculate stream time by tokens sent (60 BTSG == 1 hour)
-
-        // increment stream-id
+        // increment global stream-id count
         let id = STREAM_ID.update(deps.storage, |mut i| {
             i += 1u64;
             Ok::<u64, ContractError>(i)
         })?;
 
-        // define stream details
-        let mut stream_state = Stream {
-            streamer: info.sender.clone(),
-            provider: state.proivider,
-            stream_start: env.block.time,
-            duration: env.block.time,
-            key: id,
-        };
-
+        let mut stream_duration: u64 = 0;
         // assert stream payment
-        let tokens = info.funds;
-        let payment = tokens.iter().find(|a| a.denom == "ubtsg");
+        let payment = info.funds.iter().find(|a| a.denom.as_str() == "ubtsg");
         if let Some(stream_payment) = payment {
-            let duration = stream_payment.amount.u128() as u64;
+            let duration_in_mins: u64 = stream_payment.amount.u128().try_into()?; // errors if payment amount >= 2^64
+            let duration = duration_in_mins.checked_div(1_000_000).unwrap_or_default(); // converts micro denomination
             if duration >= state.min_duration.into() {
-                stream_state.duration = Timestamp::from_seconds(duration * 60);
+                stream_duration = Timestamp::from_seconds(duration * 60).seconds();
             } else {
                 return Err(ContractError::MinimumStreamDurationError {});
             }
@@ -97,8 +86,19 @@ pub mod manifest {
             return Err(ContractError::NoStreamPaymentProvided {});
         }
 
-        // register stream to map ,with streamer & stream id
-        STREAM.save(deps.storage, (info.sender, id), &stream_state)?;
+        // define stream details
+        let stream_state = Stream {
+            streamer: info.sender.clone(),
+            provider: state.proivider,
+            stream_start: env.block.time,
+            stream_duration: Timestamp::from_seconds(stream_duration),
+            key: id,
+            stream_expiration: env.block.time.plus_seconds(stream_duration),
+        };
+
+        // register stream to map, with (streamer,stream-id) as key
+        STREAM.save(deps.storage, (info.sender.clone(), id), &stream_state)?;
+        STREAMER_BY_ID.save(deps.storage, id, &info.sender)?;
 
         Ok(Response::new())
     }
@@ -114,7 +114,7 @@ pub mod manifest {
         let stream = STREAM.may_load(deps.storage, (info.sender, id))?;
         if let Some(stream) = stream {
             // calculate unspent funds
-            let unspent_time = stream.duration.minus_seconds(
+            let unspent_time = stream.stream_duration.minus_seconds(
                 env.block
                     .time
                     .minus_seconds(stream.stream_start.seconds())
@@ -129,7 +129,7 @@ pub mod manifest {
             });
 
             // pay provider with sent funds
-            let spent_btsg = stream.duration.seconds() - unspent_btsg;
+            let spent_btsg = stream.stream_duration.seconds() - unspent_btsg;
             let spent_msg: CosmosMsg<Empty> = CosmosMsg::Bank(cosmwasm_std::BankMsg::Send {
                 to_address: stream.provider.to_string(),
                 amount: vec![coin(spent_btsg.into(), "ubtsg")],
@@ -151,6 +151,17 @@ pub mod manifest {
         info: MessageInfo,
         id: u64,
     ) -> Result<Response, ContractError> {
+        let mut stream = query::stream_by_id(deps.as_ref(), id)?;
+        if let Some(stream) = stream {
+            // only expired stream can be closed
+            if stream.stream_expiration.seconds() > env.block.time.seconds() {
+                return Err(ContractError::StreamNotExpired {});
+            } else {
+                // send expected funds from provider
+            }
+        } else {
+            return Err(ContractError::NoStreamExists {});
+        }
         Ok(Response::new())
     }
 }
@@ -159,6 +170,7 @@ pub mod manifest {
 pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> StdResult<Binary> {
     match msg {
         QueryMsg::Stream { streamer, id } => to_json_binary(&query::stream(deps, streamer, id)?),
+        QueryMsg::StreamById { id } => to_json_binary(&query::stream_by_id(deps, id)?),
     }
 }
 
@@ -169,13 +181,22 @@ pub fn migrate(deps: DepsMut, _env: Env, _msg: MigrateMsg) -> StdResult<Response
 
 pub mod query {
     use super::*;
-    use crate::{msg::StreamResponse, state::STREAM};
+    use crate::state::{Stream, STREAM, STREAMER_BY_ID};
 
-    pub fn stream(deps: Deps, streamer: String, id: u64) -> StdResult<StreamResponse> {
+    pub fn stream(deps: Deps, streamer: String, id: u64) -> StdResult<Option<Stream>> {
         // check if streamer has an active stream
-        Ok(StreamResponse {
-            stream: STREAM.may_load(deps.storage, (deps.api.addr_validate(&streamer)?, id))?,
-        })
+        Ok(STREAM.may_load(deps.storage, (deps.api.addr_validate(&streamer)?, id))?)
+    }
+
+    pub fn stream_by_id(deps: Deps, id: u64) -> StdResult<Option<Stream>> {
+        if let Some(streamer) = STREAMER_BY_ID.may_load(deps.storage, id.clone())? {
+            Ok(STREAM.may_load(
+                deps.storage,
+                (deps.api.addr_validate(&streamer.as_str())?, id),
+            )?)
+        } else {
+            Ok(None)
+        }
     }
 }
 
